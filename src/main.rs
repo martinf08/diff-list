@@ -1,29 +1,26 @@
 use csv;
-use std::env;
+use std::collections::HashSet;
+use std::fs::File as FileReader;
+use std::io::BufRead;
+use std::iter::FromIterator;
 use std::path::Path;
-use std::borrow::Cow;
-use std::rc::Rc;
-use std::cell::{RefCell, RefMut};
+use std::{env, io};
+use std::process::exit;
 
-#[derive(Debug)]
 enum FileType {
     Text,
     Csv,
 }
 
-#[derive(Debug)]
-struct File<T> {
-    path: T,
+struct File {
+    path: String,
     file_type: FileType,
 }
 
-impl<'a, T: ToString> File<T> {
-    pub fn new(s: T) -> Self {
+impl File {
+    pub fn new(s: &str) -> Self {
+        let path = Path::new(s);
 
-        let str_path: Cow<String> = Cow::Owned(s.to_string());
-        let path = Path::new(str_path.as_ref());
-
-        dbg!(&path);
         if !path.is_file() {
             panic!(format!("{} is not a file", path.to_str().unwrap()));
         }
@@ -36,45 +33,91 @@ impl<'a, T: ToString> File<T> {
             .to_lowercase() {
             ext if ext == "txt" => FileType::Text,
             ext if ext == "csv" => FileType::Csv,
-            ext => panic!(format!("Not authorized '{}' extension file", ext.as_str())),
+            ext => panic!(
+                format!(
+                    "Not authorized '{}' extension file.\nExtensions allowed : txt, csv",
+                    ext.as_str()
+                )
+            ),
         };
 
         File {
-            path: s,
+            path: s.parse().unwrap(),
             file_type,
         }
     }
 }
 
-
-#[derive(Debug)]
-struct Reader<T> {
-    files: Rc<RefCell<Vec<File<T>>>>,
+struct Reader {
+    files: Vec<File>,
+    result: Vec<HashSet<String>>,
 }
 
-impl <T>Reader<T> {
-    pub fn new(args: Vec<String>) -> Self<> {
-        let files:Rc<RefCell<Vec<File<String>>>> = Rc::new(RefCell::new(Vec::new()));
+impl Reader {
+    pub fn new(mut args: Vec<String>) -> Self <> {
+        let mut files = Vec::new();
 
-        for arg in args {
-            let file: File<String> = File::new(arg);
+        for arg in args.drain(..) {
+            let file = File::new(&*arg);
 
-
-            let mut vec: RefMut<_> = files.borrow_mut();
-            vec.push(file);
+            files.push(file);
         }
 
         Reader {
-            files: Rc::new(RefCell::new(Vec::new()))
+            files,
+            result: Vec::new(),
         }
+    }
+
+    pub fn read(&mut self) {
+        for file in self.files.iter_mut() {
+            self.result.push(match file.file_type {
+                FileType::Text => { Reader::read_txt(file) }
+                FileType::Csv => { Reader::read_csv(file) }
+            });
+        }
+    }
+
+    pub fn read_csv(file: &File) -> HashSet<String> {
+        let mut reader = csv::Reader::from_path(&file.path).unwrap();
+
+        let mut result_file = Vec::new();
+        for result in reader.records() {
+            result_file.push(String::from(result.unwrap().as_slice()))
+        }
+
+        HashSet::from_iter(result_file.into_iter())
+    }
+
+    pub fn read_txt(file: &File) -> HashSet<String> {
+        let file_handler = FileReader::open(&file.path).unwrap();
+
+        HashSet::from_iter(io::BufReader::new(file_handler)
+            .lines()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|item| item.unwrap()))
     }
 }
 
 fn main() {
-    let mut args: Vec<String> = env::args()
+    let args: Vec<String> = env::args()
         .skip(1)
         .collect::<Vec<String>>();
 
-    let reader: Reader<Rc<RefCell<Vec<File<String>>>>> = Reader::new(args);
-    dbg!(&reader);
+    if args.len() > 0 && args.len() != 2 {
+        panic!("Command need two files path as arguments. Extensions allowed : txt, csv")
+    }
+
+    if args.len() == 0 {
+        exit(0)
+    }
+
+    let mut reader = Reader::new(args);
+    reader.read();
+
+    reader.result[0]
+        .difference(&reader.result[1])
+        .into_iter()
+        .for_each(|item| { println!("{}", item) })
 }
