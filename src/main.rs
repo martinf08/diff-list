@@ -50,7 +50,7 @@ impl File {
 
 struct Reader {
     files: Vec<File>,
-    result: Vec<HashSet<String>>,
+    result: Vec<HashSet<Vec<String>>>,
 }
 
 impl Reader {
@@ -72,31 +72,47 @@ impl Reader {
     pub fn read(&mut self) {
         for file in self.files.iter_mut() {
             self.result.push(match file.file_type {
-                FileType::Text => { Reader::read_txt(file) }
                 FileType::Csv => { Reader::read_csv(file) }
+                FileType::Text => { Reader::read_txt(file) }
             });
         }
     }
 
-    pub fn read_csv(file: &File) -> HashSet<String> {
-        let mut reader = csv::Reader::from_path(&file.path).unwrap();
+    pub fn read_csv(file: &File) -> HashSet<Vec<String>> {
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_path(&file.path)
+            .unwrap();
 
-        let mut result_file = Vec::new();
+        let mut result_file: Vec<Vec<String>> = Vec::new();
         for result in reader.records() {
-            result_file.push(String::from(result.unwrap().as_slice()))
+            result_file.push(
+                result
+                    .unwrap()
+                    .iter()
+                    .map(|item| String::from(item))
+                    .collect()
+            );
         }
 
         HashSet::from_iter(result_file.into_iter())
     }
 
-    pub fn read_txt(file: &File) -> HashSet<String> {
+    pub fn read_txt(file: &File) -> HashSet<Vec<String>> {
         let file_handler = FileReader::open(&file.path).unwrap();
 
-        HashSet::from_iter(io::BufReader::new(file_handler)
+        let mut hash = HashSet::new();
+        io::BufReader::new(file_handler)
             .lines()
             .collect::<Vec<_>>()
             .into_iter()
-            .map(|item| item.unwrap()))
+            .map(|item| item.unwrap())
+            .for_each(|item| {
+                hash.insert(vec!(item));
+                return ()
+            });
+
+        hash
     }
 }
 
@@ -119,5 +135,5 @@ fn main() {
     reader.result[0]
         .difference(&reader.result[1])
         .into_iter()
-        .for_each(|item| { println!("{}", item) })
+        .for_each(|item| { println!("{:?}", item) });
 }
