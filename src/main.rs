@@ -1,15 +1,21 @@
 use csv;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::fs::File as FileReader;
 use std::io::BufRead;
 use std::iter::FromIterator;
 use std::path::Path;
 use std::{env, io};
 use std::process::exit;
+use std::borrow::BorrowMut;
 
 enum FileType {
     Text,
     Csv,
+}
+
+enum FileResult {
+    Array(Vec<String>),
+    N2Array(Vec<Vec<String>>),
 }
 
 struct File {
@@ -50,69 +56,121 @@ impl File {
 
 struct Reader {
     files: Vec<File>,
-    result: Vec<HashSet<Vec<String>>>,
+    result: Vec<HashSet<String>>,
+    options: Option<HashMap<String, String>>,
 }
 
 impl Reader {
-    pub fn new(mut args: Vec<String>) -> Self <> {
+    pub fn new(mut args: Vec<String>) -> Self {
         let mut files = Vec::new();
 
+        let mut options = HashMap::new();
         for arg in args.drain(..) {
+            let arg_cloned = arg.clone();
+
+            if arg_cloned.starts_with("--") && arg_cloned.contains(&String::from("=")) {
+                if let [option_name, value] = arg
+                    .split("=")
+                    .borrow_mut()
+                    .map(|item| String::from(item))
+                    .collect::<Vec<String>>()
+                    .as_slice() {
+                    options.insert(option_name.clone(), value.clone());
+                }
+
+                continue;
+            }
             let file = File::new(&*arg);
 
             files.push(file);
         }
 
         Reader {
+            options: Some(options),
             files,
             result: Vec::new(),
         }
     }
 
-    pub fn read(&mut self) {
+    fn read(&mut self) -> () {
         for file in self.files.iter_mut() {
-            self.result.push(match file.file_type {
-                FileType::Csv => { Reader::read_csv(file) }
+            let file_result = match file.file_type {
+                FileType::Csv => { Reader::read_csv(file, self.options.as_ref()) }
                 FileType::Text => { Reader::read_txt(file) }
+            };
+
+            self.result.push(match file_result {
+                FileResult::Array(values) => HashSet::from_iter(values.into_iter()),
+                FileResult::N2Array(mut values) => {
+                    let mut col = Vec::new();
+                    for mut value in values.drain(..) {
+                        col.push(value.swap_remove(0))
+                    }
+
+                    HashSet::from_iter(col.into_iter())
+                }
             });
         }
     }
 
-    pub fn read_csv(file: &File) -> HashSet<Vec<String>> {
+    fn read_csv(file: &File, options: Option<&HashMap<String, String>>) -> FileResult {
+         let header = match options {
+            Some(options) => {
+                if options.contains_key("--header") {
+                    options.get("--header").unwrap().as_str()
+                } else {
+                    ""
+                }
+            }
+            None => "",
+        };
+
         let mut reader = csv::ReaderBuilder::new()
-            .has_headers(false)
+            .has_headers(!header.is_empty())
             .from_path(&file.path)
             .unwrap();
 
-        let mut result_file: Vec<Vec<String>> = Vec::new();
-        for result in reader.records() {
+        let mut result_file: Vec<String> = Vec::new();
+        let mut index = Some(0);
+        for (i, result) in reader.records().enumerate() {
+            let line = result
+                .unwrap()
+                .iter()
+                .map(|item| String::from(item))
+                .collect::<Vec<String>>();
+
+            if i == 0 && !header.is_empty() && line.contains(&String::from(header)) {
+                index = line.iter().position(|r| r == header);
+                continue;
+            }
             result_file.push(
-                result
-                    .unwrap()
-                    .iter()
-                    .map(|item| String::from(item))
-                    .collect()
+                line[index.unwrap()].clone()
             );
         }
 
-        HashSet::from_iter(result_file.into_iter())
+        FileResult::Array(result_file)
     }
 
-    pub fn read_txt(file: &File) -> HashSet<Vec<String>> {
+    fn read_txt(file: &File) -> FileResult {
         let file_handler = FileReader::open(&file.path).unwrap();
 
-        let mut hash = HashSet::new();
-        io::BufReader::new(file_handler)
+        let result: Vec<String> = io::BufReader::new(file_handler)
             .lines()
             .collect::<Vec<_>>()
             .into_iter()
             .map(|item| item.unwrap())
-            .for_each(|item| {
-                hash.insert(vec!(item));
-                return ()
-            });
+            .collect();
 
-        hash
+        FileResult::Array(result)
+    }
+
+    pub fn display_diff(&mut self) {
+        self.read();
+
+        self.result[0]
+            .difference(&self.result[1])
+            .into_iter()
+            .for_each(|item| { println!("{:?}", item) });
     }
 }
 
@@ -121,19 +179,10 @@ fn main() {
         .skip(1)
         .collect::<Vec<String>>();
 
-    if args.len() > 0 && args.len() != 2 {
-        panic!("Command need two files path as arguments. Extensions allowed : txt, csv")
-    }
-
     if args.len() == 0 {
         exit(0)
     }
 
     let mut reader = Reader::new(args);
-    reader.read();
-
-    reader.result[0]
-        .difference(&reader.result[1])
-        .into_iter()
-        .for_each(|item| { println!("{:?}", item) });
+    reader.display_diff()
 }
