@@ -1,21 +1,16 @@
 use csv;
+use std::borrow::BorrowMut;
 use std::collections::{HashSet, HashMap};
 use std::fs::File as FileReader;
-use std::io::BufRead;
+use std::io::{BufRead, BufReader};
 use std::iter::FromIterator;
 use std::path::Path;
-use std::{env, io};
 use std::process::exit;
-use std::borrow::BorrowMut;
+use std::env;
 
 enum FileType {
     Text,
     Csv,
-}
-
-enum FileResult {
-    Array(Vec<String>),
-    N2Array(Vec<Vec<String>>),
 }
 
 struct File {
@@ -99,21 +94,11 @@ impl Reader {
                 FileType::Text => { Reader::read_txt(file) }
             };
 
-            self.result.push(match file_result {
-                FileResult::Array(values) => HashSet::from_iter(values.into_iter()),
-                FileResult::N2Array(mut values) => {
-                    let mut col = Vec::new();
-                    for mut value in values.drain(..) {
-                        col.push(value.swap_remove(0))
-                    }
-
-                    HashSet::from_iter(col.into_iter())
-                }
-            });
+            self.result.push( HashSet::from_iter(file_result.into_iter()));
         }
     }
 
-    fn read_csv(file: &File, options: Option<&HashMap<String, String>>) -> FileResult {
+    fn read_csv(file: &File, options: Option<&HashMap<String, String>>) -> Vec<String> {
          let header = match options {
             Some(options) => {
                 if options.contains_key("--header") {
@@ -148,20 +133,20 @@ impl Reader {
             );
         }
 
-        FileResult::Array(result_file)
+        result_file
     }
 
-    fn read_txt(file: &File) -> FileResult {
+    fn read_txt(file: &File) -> Vec<String> {
         let file_handler = FileReader::open(&file.path).unwrap();
 
-        let result: Vec<String> = io::BufReader::new(file_handler)
+        let result: Vec<String> = BufReader::new(file_handler)
             .lines()
             .collect::<Vec<_>>()
             .into_iter()
             .map(|item| item.unwrap())
             .collect();
 
-        FileResult::Array(result)
+        result
     }
 
     pub fn display_diff(&mut self) {
