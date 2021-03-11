@@ -94,12 +94,12 @@ impl Reader {
                 FileType::Text => { Reader::read_txt(file) }
             };
 
-            self.result.push( HashSet::from_iter(file_result.into_iter()));
+            self.result.push(HashSet::from_iter(file_result.into_iter()));
         }
     }
 
     fn read_csv(file: &File, options: Option<&HashMap<String, String>>) -> Vec<String> {
-         let header = match options {
+        let header = match options {
             Some(options) => {
                 if options.contains_key("--header") {
                     options.get("--header").unwrap().as_str()
@@ -164,8 +164,14 @@ fn main() {
         .skip(1)
         .collect::<Vec<String>>();
 
-    if args.len() == 0 {
-        exit(0)
+    if args.len() == 0 || args.first().unwrap() == "--help" {
+        println!("{}", format!("Only .csv and .txt files allowed
+Usage:
+    diff-list --help
+    diff-list <path-1> <path-2>
+    diff-list --header=<header-name> (For csv header only)"
+        ));
+        exit(0);
     }
 
     let mut reader = Reader::new(args);
