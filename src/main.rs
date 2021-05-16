@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::prelude::*;
 use std::io;
+use std::io::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::str::FromStr;
 use structopt::StructOpt;
+use csv::ReaderBuilder;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "dff")]
@@ -61,7 +62,7 @@ impl FileTypeExt for PathBuf {
 
 fn read_from_path(
     path_buffer: PathBuf,
-    _header: Option<String>,
+    header: Option<String>,
 ) -> Result<HashSet<String>, io::Error> {
     match path_buffer.get_filetype()? {
         FileType::Text => {
@@ -74,10 +75,30 @@ fn read_from_path(
 
             Ok(data)
         }
-        FileType::Csv => {
-            unimplemented!()
-        }
+        FileType::Csv => Ok(read_csv(path_buffer, header)?)
     }
+}
+
+fn read_csv(
+    path_buffer: PathBuf,
+    header: Option<String>,
+) -> Result<HashSet<String>, io::Error> {
+
+    let skip_first = match header {
+        Some(_header) => false,
+        None => true,
+    };
+
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(skip_first)
+        .from_path(path_buffer.as_path())?;
+
+    for result in reader.deserialize() {
+        let record: Vec<String> = result?;
+        println!("{:?}", record);
+    }
+
+    Ok(HashSet::new())
 }
 
 fn write_target(values: Vec<String>, path_buffer: PathBuf) -> Result<(), io::Error> {
@@ -101,6 +122,7 @@ fn output_result(values: Vec<String>, path_buffer: Option<PathBuf>) -> Result<()
 
         Ok(())
     };
+
     match path_buffer {
         Some(path_buf) => match path_buf.get_filetype()? {
             FileType::Text => write_target(values, path_buf),
