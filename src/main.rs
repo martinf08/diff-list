@@ -30,7 +30,7 @@ enum FileType {
 }
 
 impl FromStr for FileType {
-    type Err = ();
+    type Err = io::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -42,20 +42,19 @@ impl FromStr for FileType {
 }
 
 trait FileTypeExt {
-    fn get_filetype(&self) -> FileType;
+    fn get_filetype(&self) -> Result<FileType, io::Error>;
 }
 
 impl FileTypeExt for PathBuf {
-    fn get_filetype(&self) -> FileType {
-        FileType::from(
+    fn get_filetype(&self) -> Result<FileType, io::Error> {
+        Ok(FileType::from(
             self.as_path()
                 .extension()
                 .unwrap()
                 .to_str()
                 .unwrap()
-                .parse()
-                .unwrap(),
-        )
+                .parse()?,
+        ))
     }
 }
 
@@ -63,7 +62,7 @@ fn read_from_path(
     path_buffer: PathBuf,
     _header: Option<String>,
 ) -> Result<HashSet<String>, io::Error> {
-    match path_buffer.get_filetype() {
+    match path_buffer.get_filetype()? {
         FileType::Text => {
             let file = File::open(path_buffer.as_path())?;
             let buffer = BufReader::new(file);
@@ -80,15 +79,15 @@ fn read_from_path(
     }
 }
 
-fn output_result(values: Vec<String>, path_buffer: Option<PathBuf>) -> () {
+fn output_result(values: Vec<String>, path_buffer: Option<PathBuf>) -> Result<(), io::Error> {
     if values.is_empty() {
-        ()
+        return Ok(());
     }
 
     match path_buffer {
-        Some(path_buf) => match path_buf.get_filetype() {
-            FileType::Text => (),
-            FileType::Csv => (),
+        Some(path_buf) => match path_buf.get_filetype()? {
+            FileType::Text => unimplemented!(),
+            FileType::Csv => unimplemented!(),
         },
         None => {
             for value in values {
@@ -96,6 +95,8 @@ fn output_result(values: Vec<String>, path_buffer: Option<PathBuf>) -> () {
             }
         }
     }
+
+    Ok(())
 }
 
 fn main() {
@@ -112,5 +113,5 @@ fn main() {
         .cloned()
         .collect();
 
-    output_result(result, args.target);
+    output_result(result, args.target).expect("Unable to output the result");
 }
