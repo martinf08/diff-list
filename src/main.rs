@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs::File;
+use std::io::prelude::*;
 use std::io;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -79,22 +80,34 @@ fn read_from_path(
     }
 }
 
+fn write_target(values: Vec<String>, path_buffer: PathBuf) -> Result<(), io::Error> {
+    let mut file = File::create(path_buffer.as_path())?;
+    for value in values {
+        write!(file, "{}", value)?;
+    }
+
+    Ok(())
+}
+
 fn output_result(values: Vec<String>, path_buffer: Option<PathBuf>) -> Result<(), io::Error> {
     if values.is_empty() {
         return Ok(());
     }
 
+    let output_stdout = move |values: Vec<String>| -> Result<(), io::Error> {
+        for value in values {
+            println!("{}", value);
+        }
+
+        Ok(())
+    };
     match path_buffer {
         Some(path_buf) => match path_buf.get_filetype()? {
-            FileType::Text => unimplemented!(),
-            FileType::Csv => unimplemented!(),
+            FileType::Text => write_target(values, path_buf),
+            _ => return output_stdout(values),
         },
-        None => {
-            for value in values {
-                println!("{}", value);
-            }
-        }
-    }
+        None => return output_stdout(values),
+    }?;
 
     Ok(())
 }
