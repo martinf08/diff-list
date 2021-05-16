@@ -1,10 +1,10 @@
 [package]
-name = "diff-list"
-version = "0.1.0"
+name = "dff"
+version = "0.2.0"
 authors = ["Martin <martin.fontana08@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-csv = "1.1.5"
+clap = "2"
+structopt = { version = "0.3", default-features = false }
+serde_any = "0.5.0"
