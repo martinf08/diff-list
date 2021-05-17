@@ -1,179 +1,175 @@
-use csv;
-use std::borrow::BorrowMut;
-use std::collections::{HashSet, HashMap};
-use std::fs::File as FileReader;
+use csv::ReaderBuilder;
+use std::collections::HashSet;
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::iter::FromIterator;
-use std::path::Path;
-use std::process::exit;
-use std::env;
+use std::path::PathBuf;
+use std::str::FromStr;
+use structopt::StructOpt;
+
+#[derive(Debug, StructOpt)]
+#[structopt(name = "dff")]
+struct Opt {
+    #[structopt(parse(from_os_str))]
+    primary_source_file: PathBuf,
+
+    #[structopt(name = "primary-header", short = "p")]
+    primary_header: Option<String>,
+
+    #[structopt(parse(from_os_str))]
+    secondary_source_file: PathBuf,
+
+    #[structopt(name = "secondary-header", short = "s")]
+    secondary_header: Option<String>,
+
+    target: Option<PathBuf>,
+}
 
 enum FileType {
     Text,
     Csv,
 }
 
-struct File {
-    path: String,
-    file_type: FileType,
-}
+impl FromStr for FileType {
+    type Err = io::Error;
 
-impl File {
-    pub fn new(s: &str) -> Self {
-        let path = Path::new(s);
-
-        if !path.is_file() {
-            panic!(format!("{} is not a file", path.to_str().unwrap()));
-        }
-
-        let file_type = match path
-            .extension()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_lowercase() {
-            ext if ext == "txt" => FileType::Text,
-            ext if ext == "csv" => FileType::Csv,
-            ext => panic!(
-                format!(
-                    "Not authorized '{}' extension file.\nExtensions allowed : txt, csv",
-                    ext.as_str()
-                )
-            ),
-        };
-
-        File {
-            path: s.parse().unwrap(),
-            file_type,
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "txt" => Ok(FileType::Text),
+            "csv" => Ok(FileType::Csv),
+            _ => panic!("File extension not found. Available are 'txt' and 'csv'"),
         }
     }
 }
 
-struct Reader {
-    files: Vec<File>,
-    result: Vec<HashSet<String>>,
-    options: Option<HashMap<String, String>>,
+trait FileTypeExt {
+    fn get_filetype(&self) -> Result<FileType, io::Error>;
 }
 
-impl Reader {
-    pub fn new(mut args: Vec<String>) -> Self {
-        let mut files = Vec::new();
-
-        let mut options = HashMap::new();
-        for arg in args.drain(..) {
-            let arg_cloned = arg.clone();
-
-            if arg_cloned.starts_with("--") && arg_cloned.contains(&String::from("=")) {
-                if let [option_name, value] = arg
-                    .split("=")
-                    .borrow_mut()
-                    .map(|item| String::from(item))
-                    .collect::<Vec<String>>()
-                    .as_slice() {
-                    options.insert(option_name.clone(), value.clone());
-                }
-
-                continue;
-            }
-            let file = File::new(&*arg);
-
-            files.push(file);
-        }
-
-        Reader {
-            options: Some(options),
-            files,
-            result: Vec::new(),
-        }
-    }
-
-    fn read(&mut self) -> () {
-        for file in self.files.iter_mut() {
-            let file_result = match file.file_type {
-                FileType::Csv => { Reader::read_csv(file, self.options.as_ref()) }
-                FileType::Text => { Reader::read_txt(file) }
-            };
-
-            self.result.push(HashSet::from_iter(file_result.into_iter()));
-        }
-    }
-
-    fn read_csv(file: &File, options: Option<&HashMap<String, String>>) -> Vec<String> {
-        let header = match options {
-            Some(options) => {
-                if options.contains_key("--header") {
-                    options.get("--header").unwrap().as_str()
-                } else {
-                    ""
-                }
-            }
-            None => "",
-        };
-
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(!header.is_empty())
-            .from_path(&file.path)
-            .unwrap();
-
-        let mut result_file: Vec<String> = Vec::new();
-        let mut index = Some(0);
-        for (i, result) in reader.records().enumerate() {
-            let line = result
+impl FileTypeExt for PathBuf {
+    fn get_filetype(&self) -> Result<FileType, io::Error> {
+        Ok(FileType::from(
+            self.as_path()
+                .extension()
                 .unwrap()
-                .iter()
-                .map(|item| String::from(item))
-                .collect::<Vec<String>>();
+                .to_str()
+                .unwrap()
+                .parse()?,
+        ))
+    }
+}
 
-            if i == 0 && !header.is_empty() && line.contains(&String::from(header)) {
-                index = line.iter().position(|r| r == header);
-                continue;
-            }
-            result_file.push(
-                line[index.unwrap()].clone()
+fn read_from_path(
+    path_buffer: PathBuf,
+    header: Option<String>,
+) -> Result<HashSet<String>, io::Error> {
+    match path_buffer.get_filetype()? {
+        FileType::Text => {
+            let file = File::open(path_buffer.as_path())?;
+            let buffer = BufReader::new(file);
+            let data: HashSet<String> = buffer
+                .lines()
+                .map(|l| l.expect("Could not parse line"))
+                .collect();
+
+            Ok(data)
+        }
+        FileType::Csv => Ok(read_csv(path_buffer, header)?),
+    }
+}
+
+fn read_csv(path_buffer: PathBuf, header: Option<String>) -> Result<HashSet<String>, io::Error> {
+    let skip_first = match &header {
+        Some(_header) => false,
+        None => true,
+    };
+
+    let mut reader = ReaderBuilder::new()
+        .has_headers(skip_first)
+        .from_path(path_buffer.as_path())?;
+
+    let mut index: Option<usize> = Some(0);
+    if let Some(search) = &header {
+        if let Some(found_index) = reader
+            .deserialize::<Vec<String>>()
+            .next()
+            .unwrap()?
+            .iter()
+            .position(|v: &String| v == search)
+        {
+            index = Some(found_index);
+        }
+    }
+
+    let mut data: HashSet<String> = HashSet::new();
+    for result in reader.deserialize() {
+        let record: Vec<String> = result?;
+
+        if let Some(index) = index {
+            let values: HashSet<String> = HashSet::from_iter(
+                record
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| i == index)
+                    .map(|(_, v)| v)
+                    .cloned(),
             );
+
+            data.extend(values)
+        }
+    }
+
+    Ok(data)
+}
+
+fn write_target(values: Vec<String>, path_buffer: PathBuf) -> Result<(), io::Error> {
+    let mut file = File::create(path_buffer.as_path())?;
+    for value in values {
+        write!(file, "{}", value)?;
+    }
+
+    Ok(())
+}
+
+fn output_result(values: Vec<String>, path_buffer: Option<PathBuf>) -> Result<(), io::Error> {
+    if values.is_empty() {
+        return Ok(());
+    }
+
+    let output_stdout = move |values: Vec<String>| -> Result<(), io::Error> {
+        for value in values {
+            println!("{}", value);
         }
 
-        result_file
-    }
+        Ok(())
+    };
 
-    fn read_txt(file: &File) -> Vec<String> {
-        let file_handler = FileReader::open(&file.path).unwrap();
+    match path_buffer {
+        Some(path_buf) => match path_buf.get_filetype()? {
+            FileType::Text => write_target(values, path_buf),
+            _ => return output_stdout(values),
+        },
+        None => return output_stdout(values),
+    }?;
 
-        let result: Vec<String> = BufReader::new(file_handler)
-            .lines()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|item| item.unwrap())
-            .collect();
-
-        result
-    }
-
-    pub fn display_diff(&mut self) {
-        self.read();
-
-        self.result[0]
-            .difference(&self.result[1])
-            .into_iter()
-            .for_each(|item| { println!("{:?}", item) });
-    }
+    Ok(())
 }
 
 fn main() {
-    let args: Vec<String> = env::args()
-        .skip(1)
-        .collect::<Vec<String>>();
+    let args: Opt = Opt::from_args();
 
-    if args.len() == 0 || args.first().unwrap() == "--help" {
-        println!("{}", format!("Only .csv and .txt files allowed
-Usage:
-    diff-list --help
-    diff-list <path-1> <path-2>
-    diff-list --header=<header-name> (For csv header only)"
-        ));
-        exit(0);
-    }
+    let primary_data = read_from_path(args.primary_source_file, args.primary_header)
+        .expect("Unable to parse file of primary source");
+    let secondary_data = read_from_path(args.secondary_source_file, args.secondary_header)
+        .expect("Unable to parse file of secondary source");
 
-    let mut reader = Reader::new(args);
-    reader.display_diff()
+    let result: Vec<String> = primary_data
+        .difference(&secondary_data)
+        .into_iter()
+        .cloned()
+        .collect();
+
+    output_result(result, args.target).expect("Unable to output the result");
 }
