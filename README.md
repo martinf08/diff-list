@@ -4,7 +4,7 @@
 
 ## Usage
 ### Text files
-<pre>cargo -- file_1.txt file_2.txt {output_file}</pre>
+<pre>cargo run -- file_1.txt file_2.txt {output_file}</pre>
 - The default output is the standard output
 
 ## Run with csv
