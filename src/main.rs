@@ -1,12 +1,13 @@
+use csv::ReaderBuilder;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 use std::io::{BufRead, BufReader};
+use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::str::FromStr;
 use structopt::StructOpt;
-use csv::ReaderBuilder;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "dff")]
@@ -75,30 +76,52 @@ fn read_from_path(
 
             Ok(data)
         }
-        FileType::Csv => Ok(read_csv(path_buffer, header)?)
+        FileType::Csv => Ok(read_csv(path_buffer, header)?),
     }
 }
 
-fn read_csv(
-    path_buffer: PathBuf,
-    header: Option<String>,
-) -> Result<HashSet<String>, io::Error> {
-
-    let skip_first = match header {
+fn read_csv(path_buffer: PathBuf, header: Option<String>) -> Result<HashSet<String>, io::Error> {
+    let skip_first = match &header {
         Some(_header) => false,
         None => true,
     };
 
-    let mut reader = csv::ReaderBuilder::new()
+    let mut reader = ReaderBuilder::new()
         .has_headers(skip_first)
         .from_path(path_buffer.as_path())?;
 
-    for result in reader.deserialize() {
-        let record: Vec<String> = result?;
-        println!("{:?}", record);
+    let mut index: Option<usize> = Some(0);
+    if let Some(search) = &header {
+        if let Some(found_index) = reader
+            .deserialize::<Vec<String>>()
+            .next()
+            .unwrap()?
+            .iter()
+            .position(|v: &String| v == search)
+        {
+            index = Some(found_index);
+        }
     }
 
-    Ok(HashSet::new())
+    let mut data: HashSet<String> = HashSet::new();
+    for result in reader.deserialize() {
+        let record: Vec<String> = result?;
+
+        if let Some(index) = index {
+            let values: HashSet<String> = HashSet::from_iter(
+                record
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| i == index)
+                    .map(|(_, v)| v)
+                    .cloned(),
+            );
+
+            data.extend(values)
+        }
+    }
+
+    Ok(data)
 }
 
 fn write_target(values: Vec<String>, path_buffer: PathBuf) -> Result<(), io::Error> {
